@@ -101,7 +101,7 @@ def prepare_working_dir(config):
 
     folders = ["/corpus/regular", "/corpus/crash",
                "/corpus/kasan", "/corpus/timeout",
-               "/metadata", "/bitmaps", "/imports",
+               "/metadata", "/bitmaps", "/imports","/imports2",
                "/snapshot", "/funky", "/traces", "/logs"]
 
     if resume and purge:
@@ -123,7 +123,7 @@ def prepare_working_dir(config):
 
     return True
 
-def copy_seed_files(working_directory, seed_directory):
+def copy_seed_files(working_directory, seed_directory, seed_directory2=None):
     if len(os.listdir(seed_directory)) == 0:
         return False
 
@@ -140,6 +140,16 @@ def copy_seed_files(working_directory, seed_directory):
                     i += 1
                 except PermissionError:
                     logger.error("Skipping seed file %s (permission denied)." % path)
+    if seed_directory2:
+        for (directory, _, files) in os.walk(seed_directory2):
+            for f in files:
+                path = os.path.join(directory, f)
+                if os.path.exists(path):
+                    try:
+                        copyfile(path, working_directory + "/imports2/" + "seed_%05d" % i)
+                        i += 1
+                    except PermissionError:
+                        logger.error("Skipping seed2 file %s (permission denied)." % path)
     return True
 
 def print_hprintf(msg):

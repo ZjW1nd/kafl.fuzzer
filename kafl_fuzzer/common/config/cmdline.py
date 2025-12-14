@@ -82,6 +82,8 @@ def add_args_general(parser):
 # kAFL/Fuzzer-specific options
 def add_args_fuzzer(parser):
     parser.add_argument('--seed-dir', metavar='<dir>', help='path to the seed directory.')
+    parser.add_argument('--seed-dir2', required=False, metavar='<dir>', help=hidden('path to the 2nd dimension seed directory (for 2D fuzzing)'))
+    parser.add_argument('--dim2_filepool', required=False, metavar='<File>', help=hidden('path to the 2nd dimension filepool directory (for 2D fuzzing)'))
     parser.add_argument('--dict', required=False, metavar='<file>',
                         help='import dictionary file for use in havoc stage.', default=None)
     parser.add_argument('--funky', required=False, help='perform extra validation and store funky inputs.',

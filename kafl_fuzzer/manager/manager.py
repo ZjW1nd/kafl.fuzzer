@@ -46,7 +46,7 @@ class ManagerTask:
         self.queue = InputQueue(self.config, self.statistics)
         self.bitmap_storage = BitmapStorage(config, "main", read_only=False)
 
-        helper_init()
+        helper_init() # 初始化bitmap.so, 源码位于native/bitmap.c
 
         redqueen_global_config(
                 redq_hammering = self.config.redqueen_hammer,
@@ -61,6 +61,7 @@ class ManagerTask:
         # Inputs placed to imports/ folder have priority.
         # This can also be used to inject additional seeds at runtime.
         imports = glob.glob(self.config.workdir + "/imports/*")
+        imports2= glob.glob(self.config.workdir + "/imports2/*")
         if imports:
             path = imports.pop()
             logger.debug("Importing payload from %s" % path)

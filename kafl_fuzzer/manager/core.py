@@ -58,6 +58,7 @@ def start(settings: LazySettings):
 
     workdir   = settings.workdir
     seed_dir   = settings.seed_dir
+    seed_dir2  = settings.seed_dir2
     num_worker = settings.processes
 
     if not post_self_check(settings):
@@ -72,7 +73,11 @@ def start(settings: LazySettings):
     # otherwise the file handler created is removed
     add_logging_file(settings)
 
-    if seed_dir:
+    if seed_dir and seed_dir2: # 2 dimension fuzz
+        if not copy_seed_files(workdir, seed_dir, seed_dir2):
+            logger.error("Error when importing seeds. Exit.")
+            return 1
+    elif seed_dir:
         if not copy_seed_files(workdir, seed_dir):
             logger.error("Error when importing seeds. Exit.")
             return 1

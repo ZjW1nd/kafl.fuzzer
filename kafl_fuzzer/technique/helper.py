@@ -106,7 +106,7 @@ def swap_32(value):
     return struct.unpack("<I", struct.pack(">I", value))[0]
 
 bitmap_native_so = None
-
+# bitmap.so 用于判断变异去重，来自native/bitmap.c的编译，提供三个helper函数，判断值是否可能由bitflip, arithmetic和interesting变异产生
 def helper_init():
     global bitmap_native_so
     if not bitmap_native_so:
