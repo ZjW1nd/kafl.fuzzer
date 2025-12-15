@@ -51,6 +51,7 @@ class WorkerTask:
         self.bitmap_storage = BitmapStorage(self.config, "main")
 
         self.payload_limit = self.q.get_payload_limit()
+        self.payload2_limit = self.q.get_payload2_limit() # 固定
         self.t_hard = config.timeout_hard
         self.t_soft = config.timeout_soft
         self.t_check = config.timeout_check
@@ -143,7 +144,7 @@ class WorkerTask:
 
     def loop(self):
         self.logger.info("Entering fuzz loop..")
-        self.conn.send_ready()
+        self.conn.send_ready() # 通知manager已经准备好
 
         while True:
             try:

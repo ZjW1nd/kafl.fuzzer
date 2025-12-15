@@ -33,15 +33,15 @@ result_tuple = namedtuple('result_tuple', [
 
 my_magic = 0x54502d554d4551
 my_version = 0x3
-my_hash = 0x54
+my_hash = 0x58 # we changed aux buffer, need to change hash here
 
-HEADER_SIZE = 128
+HEADER_SIZE = 128 # 自动对齐
 CAP_SIZE = 256
 CONFIG_SIZE = 512
 STATUS_SIZE = 512
 MISC_SIZE = 4096-(HEADER_SIZE+CAP_SIZE+CONFIG_SIZE+STATUS_SIZE)
 
-HEADER_OFFSET = 0
+HEADER_OFFSET = 0 # 应该都是冗余对齐的，不用修改
 CAP_OFFSET = HEADER_SIZE
 CONFIG_OFFSET = CAP_OFFSET + CAP_SIZE
 STATUS_OFFSET = CONFIG_OFFSET + CONFIG_SIZE

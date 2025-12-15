@@ -42,6 +42,9 @@ class qemu:
         self.bitmap_size = config.bitmap_size
         self.payload_size = config.payload_size
         self.payload_limit = config.payload_size - qemu.payload_header_size
+        # payload2
+        self.payload2_size = (1 << 20)
+        self.payload2_limit = (1 << 20) - qemu.payload_header_size
         self.config = config
         self.pid = pid
         self.alt_bitmap = bytearray(self.bitmap_size)
@@ -62,6 +65,7 @@ class qemu:
         self.bitmap_filename = workdir + "/bitmap_%d" % self.pid
         self.ijonmap_filename = workdir + "/ijon_%d" % self.pid
         self.payload_filename = workdir + "/payload_%d" % self.pid
+        self.payload2_filename = workdir + "/payload2_%d" % self.pid
         self.control_filename = workdir + "/interface_%d" % self.pid
         self.qemu_trace_log = workdir + "/qemu_trace_%02d.log" % self.pid
         self.serial_logfile = workdir + "/serial_%02d.log" % self.pid
@@ -83,7 +87,8 @@ class qemu:
                     ",workdir=" + workdir + \
                     ",worker_id=%d" % self.pid + \
                     ",bitmap_size=" + str(self.bitmap_size) + \
-                    ",input_buffer_size=" + str(self.payload_size)
+                    ",input_buffer_size=" + str(self.payload_size) + \
+                    ",input_buffer2_size=" + str(self.payload2_size) # 事实上被我们固定了
 
         if self.config.trace:
             self.cmd += ",dump_pt_trace"
@@ -142,7 +147,7 @@ class qemu:
         self.cmd.append("-fast_vm_reload")
         snapshot_path = workdir + "/snapshot/"
 
-        if pid == 0 or pid == 1337 and not resume:
+        if pid == 0 or pid == 1337 and not resume: # 他们的测试环境或许有1337个vcpu（？
             # boot and create snapshot
             if self.config.qemu_snapshot:
                 self.cmd.append("path=%s,load=off,pre_path=%s" % (snapshot_path, self.config.qemu_snapshot))
@@ -198,6 +203,7 @@ class qemu:
 
         try:
             self.fs_shm.close()
+            self.fs_shm2.close()
         except:
             pass
 
@@ -208,6 +214,7 @@ class qemu:
 
         try:
             os.close(self.fs_shm_f)
+            os.close(self.fs_shm_f2)
         except:
             pass
 
@@ -236,10 +243,12 @@ class qemu:
         self.ijon_shm_f     = os.open(self.ijonmap_filename, os.O_RDWR | os.O_SYNC | os.O_CREAT)
         self.kafl_shm_f     = os.open(self.bitmap_filename, os.O_RDWR | os.O_SYNC | os.O_CREAT)
         self.fs_shm_f       = os.open(self.payload_filename, os.O_RDWR | os.O_SYNC | os.O_CREAT)
+        self.fs_shm_f2      = os.open(self.payload2_filename, os.O_RDWR | os.O_SYNC | os.O_CREAT)
 
         os.ftruncate(self.ijon_shm_f, self.ijonmap_size)
         os.ftruncate(self.kafl_shm_f, self.bitmap_size)
         os.ftruncate(self.fs_shm_f, self.payload_size)
+        os.ftruncate(self.fs_shm_f2, self.payload2_size)
 
         if self.pid not in [0, 1337]:
             final_cmdline = ""
@@ -318,11 +327,13 @@ class qemu:
 
         # Qemu tends to truncate / resize the files. Not sure why..
         assert(self.payload_size == os.path.getsize(self.payload_filename))
+        assert(self.payload2_size == os.path.getsize(self.payload2_filename))
         assert(self.bitmap_size == os.path.getsize(self.bitmap_filename))
         assert(self.ijonmap_size == os.path.getsize(self.ijonmap_filename))
         self.kafl_shm = mmap.mmap(self.kafl_shm_f, 0)
         self.c_bitmap = (ctypes.c_uint8 * self.bitmap_size).from_buffer(self.kafl_shm)
         self.fs_shm = mmap.mmap(self.fs_shm_f, 0)
+        self.fs_shm2 = mmap.mmap(self.fs_shm_f2, 0)
 
     def __qemu_connect(self):
         # Note: setblocking() disables the timeout! settimeout() will automatically set blocking!
@@ -526,6 +537,9 @@ class qemu:
 
     def get_payload_limit(self):
         return self.payload_limit
+
+    def get_payload2_limit(self):
+        return self.payload2_limit
 
     def set_payload(self, payload):
         # Ensure the payload fits into SHM. Caller has to cut off since they also report findings.
