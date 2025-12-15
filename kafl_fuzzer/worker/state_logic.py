@@ -17,6 +17,7 @@ from kafl_fuzzer.technique.redqueen.mod import RedqueenInfoGatherer
 from kafl_fuzzer.technique.redqueen.workdir import RedqueenWorkdir
 from kafl_fuzzer.technique import trim, bitflip, arithmetic, interesting_values, havoc, radamsa
 from kafl_fuzzer.technique import grimoire_mutations as grimoire
+from kafl_fuzzer.worker.worker import WorkerTask
 #from kafl_fuzzer.technique.trim import perform_trim, perform_center_trim, perform_extend
 #import kafl_fuzzer.technique.bitflip as bitflip
 #import kafl_fuzzer.technique.havoc as havoc
@@ -30,7 +31,7 @@ class FuzzingStateLogic:
     COLORIZATION_STEPS = 1500
     COLORIZATION_TIMEOUT = 5
 
-    def __init__(self, worker, config):
+    def __init__(self, worker: WorkerTask, config):
         self.worker = worker
         self.logger = self.worker.logger
         self.config = config
@@ -84,9 +85,9 @@ class FuzzingStateLogic:
 
         return ret
 
-    def process_import(self, payload, metadata):
+    def process_import(self, payload, payload2, metadata):
         self.init_stage_info(metadata)
-        self.handle_import(payload, metadata)
+        self.handle_import(payload, payload2, metadata)
 
     def process_kickstart(self, kick_len):
         metadata = {"state": {"name": "kickstart"}, "id": 0}
@@ -154,14 +155,14 @@ class FuzzingStateLogic:
             info.update(extra_info)
         return info
 
-    def handle_import(self, payload, metadata):
+    def handle_import(self, payload, payload2, metadata):
         # for funky targets, retry seed a couple times to avoid false negatives
         retries = 1
         if self.config.funky:
             retries = 8
 
         for _ in range(retries):
-            _, is_new = self.execute(payload, label="import")
+            _, is_new = self.execute(payload, payload2, label="import")
             if is_new: break
 
         # Inform user if seed yields no new coverage. This may happen if -ip0 is
@@ -309,14 +310,14 @@ class FuzzingStateLogic:
         return self.worker.validate_bytes(payload, metadata, parent_info)
 
 
-    def execute(self, payload, label=None, extra_info=None):
+    def execute(self, payload, payload2, label=None, extra_info=None):
 
-        self.stage_info_execs += 1
+        self.stage_info_execs += 1 # treat as 1 round
         if label and label != self.stage_info["method"]:
             self.stage_update_label(label)
 
         parent_info = self.get_parent_info(extra_info)
-        bitmap, is_new = self.worker.execute(payload, parent_info)
+        bitmap, is_new = self.worker.execute(payload, payload2, parent_info)
         if is_new:
             self.stage_info_findings += 1
         return bitmap, is_new

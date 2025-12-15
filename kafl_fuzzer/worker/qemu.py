@@ -541,10 +541,11 @@ class qemu:
     def get_payload2_limit(self):
         return self.payload2_limit
 
-    def set_payload(self, payload):
+    def set_payload(self, payload, payload2):
         # Ensure the payload fits into SHM. Caller has to cut off since they also report findings.
         # actual payload is limited to payload_size - sizeof(uint32) - sizeof(uint8)
         assert(len(payload) <= self.payload_limit), "Payload size %d > SHM limit %d. Check size/shm config" % (len(payload),self.payload_limit)
+        assert(len(payload2) <= self.payload2_limit), "Payload2 size %d > SHM limit %d. Check size/shm config" % (len(payload2),self.payload2_limit)
 
         #if len(payload) > self.payload_limit:
         #    payload = payload[:self.payload_limit]
@@ -552,6 +553,9 @@ class qemu:
             struct.pack_into("=I", self.fs_shm, 0, len(payload))
             self.fs_shm.seek(4)
             self.fs_shm.write(payload)
+            struct.pack_into("=I", self.fs_shm2, 0, len(payload2))
+            self.fs_shm2.seek(4)
+            self.fs_shm2.write(payload2)
             #self.fs_shm.flush()
         except ValueError:
             if self.exiting:

@@ -60,9 +60,10 @@ class WorkerTask:
     def handle_import(self, msg):
         meta_data = {"state": {"name": "import"}, "id": 0}
         payload = msg["task"]["payload"]
+        payload2 = msg["task"]["payload2"]
         self.q.set_timeout(self.t_hard)
         try:
-            self.logic.process_import(payload, meta_data)
+            self.logic.process_import(payload, payload2, meta_data)
         except QemuIOException:
             self.logger.warn("Execution failure on import.")
             self.conn.send_node_abort(None, None)
@@ -322,11 +323,11 @@ class WorkerTask:
         return exec_res
 
 
-    def __execute(self, data, retry=0):
-
+    def __execute(self, payload, payload2, retry=0):
+        # 在这里添加payload2不影响，就算没有payload2, 最后也只是getpayload2没读到东西而已
         try:
-            self.q.set_payload(data)
-            res = self.q.send_payload()
+            self.q.set_payload(payload, payload2) # 到这里，agent应该就能读到两个payload了
+            res = self.q.send_payload() # set_payload写入shm tmpfs, 然后用nyx interface socket控制执行
             self.statistics.event_exec(bb_cov=self.q.bb_seen, trashed=res.trashed)
             return res
         except (ValueError, BrokenPipeError, ConnectionResetError) as e:
@@ -339,15 +340,17 @@ class WorkerTask:
             self.statistics.event_reload("shm/socket error")
             if not self.q.restart():
                 raise QemuIOException("Qemu restart failure.") from e
-        return self.__execute(data, retry=retry+1)
+        return self.__execute(payload, payload2, retry=retry+1)
 
 
-    def execute(self, data, info, hard_timeout=False):
+    def execute(self, payload, payload2, info, hard_timeout=False):
 
-        if len(data) > self.payload_limit:
-            data = data[:self.payload_limit]
+        if len(payload) > self.payload_limit:
+            payload = payload[:self.payload_limit]
+        if len(payload2) > self.payload2_limit:
+            payload2 = payload2[:self.payload2_limit]
 
-        exec_res = self.__execute(data)
+        exec_res = self.__execute(payload, payload2)
 
         is_new_input = self.bitmap_storage.should_send_to_manager(exec_res, exec_res.exit_reason)
         crash = exec_res.is_crash()
@@ -364,10 +367,10 @@ class WorkerTask:
                 assert exec_res.is_lut_applied()
 
                 if self.config.funky:
-                    stable, runtime = self.funky_validate(data, exec_res, trace=trace_pt)
+                    stable, runtime = self.funky_validate(payload, exec_res, trace=trace_pt)
                     exec_res.performance = runtime
                 else:
-                    stable, runtime = self.quick_validate(data, exec_res, trace=trace_pt)
+                    stable, runtime = self.quick_validate(payload, exec_res, trace=trace_pt)
                     exec_res.performance = (exec_res.performance + runtime)/2
 
                 if trace_pt and stable:
@@ -389,7 +392,7 @@ class WorkerTask:
                     dyn_timeout = self.q.get_timeout()
                     self.q.set_timeout(self.t_hard)
                     # if still new, register the payload as regular or (true) timeout
-                    exec_res, is_new = self.execute(data, info, hard_timeout=True)
+                    exec_res, is_new = self.execute(payload, info, hard_timeout=True)
                     self.q.set_timeout(dyn_timeout)
                     if is_new and exec_res.exit_reason != "timeout":
                         self.logger.debug("Timeout checker found non-timeout with runtime %f >= %f!" % (exec_res.performance, dyn_timeout))
@@ -404,7 +407,7 @@ class WorkerTask:
                 self.q.store_crashlogs(exec_res.exit_reason, exec_res.hash())
 
             if crash or stable:
-                self.__send_to_manager(data, exec_res, info)
+                self.__send_to_manager(payload, exec_res, info)
 
         # restart Qemu on crash
         if crash:

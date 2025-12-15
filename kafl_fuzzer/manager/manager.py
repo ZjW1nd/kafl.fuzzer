@@ -67,7 +67,13 @@ class ManagerTask:
             logger.debug("Importing payload from %s" % path)
             seed = read_binary_file(path)
             os.remove(path)
-            return self.comm.send_import(conn, {"type": "import", "payload": seed})
+            seed2 = None
+            if imports2:
+                path2 = imports2.pop()
+                logger.debug("Importing payload2 from %s" % path2)
+                seed2 = read_binary_file(path2)
+                os.remove(path2)
+            return self.comm.send_import(conn, {"type": "import", "payload": seed, "payload2": seed2})
         # Process items from queue..
         node = self.queue.get_next()
         if node:
