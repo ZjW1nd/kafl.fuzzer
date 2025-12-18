@@ -86,13 +86,14 @@ class WorkerTask:
     def handle_node(self, msg):
         meta_data: Dict[str, Any] = QueueNode.get_metadata(self.config.workdir, msg["task"]["nid"])
         payload: bytes = QueueNode.get_payload(self.config.workdir, meta_data)
+        payload2: bytes = QueueNode.get_payload2(self.config.workdir, meta_data)
 
         # fixme: determine globally based on all seen regulars
         t_dyn = self.t_soft + 1.2 * meta_data["info"]["performance"]
         self.q.set_timeout(min(self.t_hard, t_dyn))
 
         try:
-            results, new_payload = self.logic.process_node(payload, meta_data)
+            results, new_payload = self.logic.process_node(payload, payload2, meta_data)
         except QemuIOException:
             # mark node as crashing and free it before escalating
             self.logger.info("Qemu execution failed for node %d." % meta_data["id"])
@@ -102,7 +103,7 @@ class WorkerTask:
 
         if new_payload:
             default_info = {"method": "validate_bits", "parent": meta_data["id"]}
-            if self.validate_bits(new_payload, meta_data, default_info):
+            if self.validate_bits(new_payload, payload2, meta_data, default_info):
                 self.logger.debug("Stage %s found alternative payload for node %d", meta_data["state"]["name"], meta_data["id"])
             else:
                 self.logger.warn("Provided alternative payload found invalid - bug in stage %s?", meta_data["state"]["name"])
@@ -163,7 +164,7 @@ class WorkerTask:
             else:
                 raise ValueError("Unknown message type {}".format(msg))
 
-    def quick_validate(self, data, old_res, trace=False):
+    def quick_validate(self, payload, payload2, old_res, trace=False):
         # Validate in persistent mode. Faster but problematic for very funky targets
         old_array = old_res.copy_to_array()
 
@@ -173,7 +174,7 @@ class WorkerTask:
             dyn_timeout = self.q.get_timeout()
             self.q.set_timeout(self.t_hard*2)
 
-        new_res = self.__execute(data).apply_lut()
+        new_res = self.__execute(payload, payload2).apply_lut()
         new_array = new_res.copy_to_array()
 
         if trace:
@@ -185,7 +186,7 @@ class WorkerTask:
 
         return False, new_res.performance
 
-    def funky_validate(self, data, old_res, trace=False):
+    def funky_validate(self, payload, payload2, old_res, trace=False):
         # Validate in persistent mode with stochastic prop of funky results
 
         validations = 8
@@ -195,7 +196,7 @@ class WorkerTask:
         trace_round=False
 
         for num in range(validations):
-            stable, runtime = self.quick_validate(data, old_res, trace=trace_round)
+            stable, runtime = self.quick_validate(payload, payload2, old_res, trace=trace_round)
             if stable:
                 confirmations += 1
                 runtime_avg += runtime
@@ -208,19 +209,21 @@ class WorkerTask:
 
         self.logger.debug("Funky input received %d/%d confirmations. Rejecting..", confirmations, validations)
         if self.config.debug:
-            self.store_funky(data)
+            self.store_funky(payload, payload2)
         return False, runtime_avg/num
 
-    def store_funky(self, data):
+    def store_funky(self, payload, payload2):
         # store funky input for further analysis 
         filename = f"%s/funky/payload_%04x%02x" % (self.config.workdir, self.num_funky, self.pid)
-        atomic_write(filename, data)
+        atomic_write(filename, payload)
+        filename2 = f"%s/funky/payload2_%04x%02x" % (self.config.workdir, self.num_funky, self.pid)
+        atomic_write(filename2, payload2)
         self.num_funky += 1
 
 
 
-    def validate_bits(self, data, old_node, default_info):
-        new_bitmap, _ = self.execute(data, default_info)
+    def validate_bits(self, payload, payload2, old_node, default_info):
+        new_bitmap, _ = self.execute(payload, payload2, default_info)
         # handle non-det inputs
         if new_bitmap is None:
             return False
@@ -228,24 +231,24 @@ class WorkerTask:
         old_bits.update(old_node["new_bits"])
         return GlobalBitmap.all_new_bits_still_set(old_bits, new_bitmap)
 
-    def validate_bytes(self, data, old_node, default_info):
-        new_bitmap, _ = self.execute(data, default_info)
+    def validate_bytes(self, data, payload2, old_node, default_info):
+        new_bitmap, _ = self.execute(data, payload2, default_info)
         # handle non-det inputs
         if new_bitmap is None:
             return False
         old_bits = old_node["new_bytes"].copy()
         return GlobalBitmap.all_new_bits_still_set(old_bits, new_bitmap)
 
-    def execute_redqueen(self, data):
+    def execute_redqueen(self, payload, payload2):
         # execute in trace mode, then restore settings
         # setting a timeout seems to interfere with tracing
         self.statistics.event_exec_redqueen()
         self.q.qemu_aux_buffer.set_redqueen_mode(True)
-        exec_res = self.execute_naked(data, timeout=0)
+        exec_res = self.execute_naked(payload, payload2, timeout=0)
         self.q.qemu_aux_buffer.set_redqueen_mode(False)
         return exec_res
 
-    def __send_to_manager(self, data, exec_res, info):
+    def __send_to_manager(self, payload, payload2, exec_res, info):
         info["time"] = time.time()
         info["exit_reason"] = exec_res.exit_reason
         info["performance"] = exec_res.performance
@@ -253,9 +256,9 @@ class WorkerTask:
         info["starved"]     = exec_res.starved
         info["trashed"]     = exec_res.trashed
         if self.conn is not None:
-            self.conn.send_new_input(data, exec_res.copy_to_array(), info)
+            self.conn.send_new_input(payload, payload2, exec_res.copy_to_array(), info)
 
-    def trace_payload(self, data, info):
+    def trace_payload(self, payload, payload2, info):
         # Legacy implementation of -trace (now -trace_cb) using libxdc_edge_callback hook.
         # This is generally slower and produces different bitmaps so we execute it in
         # a different phase as part of calibration stage.
@@ -267,11 +270,14 @@ class WorkerTask:
 
         self.logger.info("Tracing payload_%05d..", info['id'])
 
-        if len(data) > self.payload_limit:
-            data = data[:self.payload_limit]
+        if len(payload) > self.payload_limit:
+            payload = payload[:self.payload_limit]
+
+        if len(payload2) > self.payload2_limit:
+            payload2 = payload2[:self.payload2_limit]
 
         try:
-            self.q.set_payload(data)
+            self.q.set_payload(payload, payload2)
             old_timeout = self.q.get_timeout()
             self.q.set_timeout(0)
             self.q.set_trace_mode(True)
@@ -301,16 +307,18 @@ class WorkerTask:
 
         return exec_res
 
-    def execute_naked(self, data, timeout=None):
+    def execute_naked(self, payload, payload2, timeout=None):
 
-        if len(data) > self.payload_limit:
-            data = data[:self.payload_limit]
+        if len(payload) > self.payload_limit:
+            payload = payload[:self.payload_limit]
+        if len(payload2) > self.payload2_limit:
+            payload2 = payload2[:self.payload2_limit]
 
         if timeout:
             old_timeout = self.q.get_timeout()
             self.q.set_timeout(timeout)
 
-        exec_res = self.__execute(data)
+        exec_res = self.__execute(payload, payload2)
 
         if timeout:
             self.q.set_timeout(old_timeout)
@@ -367,10 +375,10 @@ class WorkerTask:
                 assert exec_res.is_lut_applied()
 
                 if self.config.funky:
-                    stable, runtime = self.funky_validate(payload, exec_res, trace=trace_pt)
+                    stable, runtime = self.funky_validate(payload, payload2, exec_res, trace=trace_pt)
                     exec_res.performance = runtime
                 else:
-                    stable, runtime = self.quick_validate(payload, exec_res, trace=trace_pt)
+                    stable, runtime = self.quick_validate(payload, payload2, exec_res, trace=trace_pt)
                     exec_res.performance = (exec_res.performance + runtime)/2
 
                 if trace_pt and stable:
@@ -392,7 +400,7 @@ class WorkerTask:
                     dyn_timeout = self.q.get_timeout()
                     self.q.set_timeout(self.t_hard)
                     # if still new, register the payload as regular or (true) timeout
-                    exec_res, is_new = self.execute(payload, info, hard_timeout=True)
+                    exec_res, is_new = self.execute(payload, payload2, info, hard_timeout=True)
                     self.q.set_timeout(dyn_timeout)
                     if is_new and exec_res.exit_reason != "timeout":
                         self.logger.debug("Timeout checker found non-timeout with runtime %f >= %f!" % (exec_res.performance, dyn_timeout))
@@ -407,7 +415,7 @@ class WorkerTask:
                 self.q.store_crashlogs(exec_res.exit_reason, exec_res.hash())
 
             if crash or stable:
-                self.__send_to_manager(payload, exec_res, info)
+                self.__send_to_manager(payload, payload2, exec_res, info)
 
         # restart Qemu on crash
         if crash:

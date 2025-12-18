@@ -17,7 +17,7 @@ from kafl_fuzzer.native import loader as native_loader
 
 
 # TODO Align with payload_size and other instances of payload max size!
-KAFL_MAX_FILE = 128 << 10
+KAFL_MAX_FILE = 512 << 10 # 原来之前的截断长度都是128kb 变异的部分都很少
 
 # TODO: Align havoc stage parameters with AFL or better
 HAVOC_BLK_SMALL = 32

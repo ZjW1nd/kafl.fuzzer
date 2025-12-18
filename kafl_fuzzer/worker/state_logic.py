@@ -46,6 +46,8 @@ class FuzzingStateLogic:
         self.attention_secs_start: float = 0
         self.attention_execs_start: float = 0
 
+        self.payload2_now = None
+
     def __str__(self):
         return str(self.worker)
 
@@ -94,14 +96,15 @@ class FuzzingStateLogic:
         self.init_stage_info(metadata)
         self.handle_kickstart(kick_len, metadata)
 
-    def process_node(self, payload: bytes, metadata):
+    def process_node(self, payload: bytes, payload2: bytes, metadata):
         self.init_stage_info(metadata)
-
+        self.payload2_now = payload2 # 处理新node, 就在statelogic复制一份当前的文件操作
+        # 不涉及payload2变异的我们就不传递payload2参数了, 用self变量对所有handler可见一个payload2
         if metadata["state"]["name"] == "initial":
             new_payload = self.handle_initial(payload, metadata)
             return self.create_update({"name": "redq/grim"}, None), new_payload
         elif metadata["state"]["name"] == "redq/grim":
-            grimoire_info = self.handle_grimoire_inference(payload, metadata)
+            grimoire_info = self.handle_grimoire_inference(payload, metadata) # 似乎不用动, 不涉及执行，grimoire只是单纯先处理payload
             self.handle_redqueen(payload, metadata)
             return self.create_update({"name": "deterministic"}, {"grimoire": grimoire_info}), None
         elif metadata["state"]["name"] == "deterministic":
@@ -175,22 +178,28 @@ class FuzzingStateLogic:
         busy_timeout = 5
         start_time = time.time()
         while (time.time() - start_time) < busy_timeout:
+            # payload2也随机生成，反正如果针对文件系统，randbytes是不可能有作用的
             payload = rand.bytes(kick_len)
-            self.execute(payload, label="kickstart")
+            payload2 = rand.bytes(kick_len)
+            self.execute(payload, payload2, label="kickstart")
 
     def handle_initial(self, payload, metadata):
         time_initial_start = time.time()
-
+        payload2 = self.payload2_now
         if self.config.trace_cb:
             self.stage_update_label("trace")
-            self.worker.trace_payload(payload, metadata)
+            self.worker.trace_payload(payload, payload2, metadata)
 
+        def execute_wrapper(payload, label=None, extra_info=None):
+            return self.execute(payload, payload2, label, extra_info)
+        
         self.stage_update_label("calibrate")
         # Update input performance using multiple randomized executions
         # Scheduler will de-prioritize execution of very slow nodes..
         num_execs = 10
         timer_start = time.time()
-        havoc.mutate_seq_havoc_array(payload, self.execute, num_execs)
+        # 用闭包做，在initial阶段我们不修改technique底层策略，同时不对操作做变异（janus论述）
+        havoc.mutate_seq_havoc_array(payload, execute_wrapper, num_execs)
         timer_end = time.time()
         self.performance = (timer_end-timer_start) / num_execs
 
@@ -200,13 +209,13 @@ class FuzzingStateLogic:
             return None
 
         if metadata['info']['starved']:
-            return trim.perform_extend(payload, metadata, self.execute, self.worker.payload_limit)
+            return trim.perform_extend(payload, metadata, execute_wrapper, self.worker.payload_limit)
 
-        new_payload = trim.perform_trim(payload, metadata, self.execute)
+        new_payload = trim.perform_trim(payload, metadata, execute_wrapper)
 
         center_trim = True
         if center_trim:
-            new_payload = trim.perform_center_trim(new_payload, metadata, self.execute)
+            new_payload = trim.perform_center_trim(new_payload, metadata, execute_wrapper)
 
         self.initial_time += time.time() - time_initial_start
         if new_payload == payload:
@@ -241,28 +250,33 @@ class FuzzingStateLogic:
     def __perform_grimoire(self, payload, metadata):
         perf = 1 / metadata["performance"]
         grimoire_input = None
-
+        payload2 = self.payload2_now
         if "grimoire" in metadata:
             if "generalized_input" in metadata["grimoire"]:
                 grimoire_input = metadata["grimoire"]["generalized_input"]
 
         self.stage_update_label("grim_havoc")
+
+        def execute_wrapper(payload, label=None, extra_info=None):
+            return self.execute(payload, payload2, label, extra_info)
+        
         if grimoire_input:
             havoc_amount = havoc.havoc_range(perf * self.HAVOC_MULTIPLIER * 2.0)
             if len(self.grimoire.generalized_inputs) < havoc_amount / 4:
                 havoc_amount = len(self.grimoire.generalized_inputs) * 2
-            grimoire.havoc(tuple(grimoire_input), self.execute, self.grimoire, havoc_amount, generalized=True)
+            grimoire.havoc(tuple(grimoire_input), execute_wrapper, self.grimoire, havoc_amount, generalized=True)
         else:
             havoc_amount = havoc.havoc_range(perf * self.HAVOC_MULTIPLIER)
             if len(self.grimoire.generalized_inputs) < havoc_amount / 4:
                 havoc_amount = len(self.grimoire.generalized_inputs)
             generalized_input = tuple([b''] + [bytes([c]) for c in payload] + [b''])
-            grimoire.havoc(generalized_input, self.execute, self.grimoire, havoc_amount, generalized=False)
+            grimoire.havoc(generalized_input, execute_wrapper, self.grimoire, havoc_amount, generalized=False)
 
     def handle_redqueen(self, payload, metadata):
         redqueen_start_time = time.time()
+        payload2 = self.payload2_now
         if self.config.redqueen:
-            self.__perform_redqueen(payload, metadata)
+            self.__perform_redqueen(payload, payload2, metadata)
         self.redqueen_time += time.time() - redqueen_start_time
 
     def handle_havoc(self, payload: bytes, metadata):
@@ -277,7 +291,7 @@ class FuzzingStateLogic:
             # TODO: AFL only has deterministic dict stage for manual dictionary.
             # However RQ dict and auto-dict actually grow over time. Perhaps
             # create multiple dicts over time and store progress in metadata?
-            if havoc_redqueen:
+            if havoc_redqueen: # useless
                 self.__perform_rq_dict(payload, metadata)
 
             if havoc_grimoire:
@@ -307,7 +321,8 @@ class FuzzingStateLogic:
         self.stage_info_execs += 1
         # FIXME: can we lift this function from worker to this class and avoid this wrapper?
         parent_info = self.get_parent_info(extra_info)
-        return self.worker.validate_bytes(payload, metadata, parent_info)
+        payload2 = self.payload2_now
+        return self.worker.validate_bytes(payload, payload2, metadata, parent_info)
 
 
     def execute(self, payload, payload2, label=None, extra_info=None):
@@ -323,34 +338,34 @@ class FuzzingStateLogic:
         return bitmap, is_new
 
 
-    def execute_redqueen(self, payload):
+    def execute_redqueen(self, payload, payload2):
         # one regular execution to ensure all pages cached
         # also colored payload may yield new findings(?)
-        self.execute(payload)
-        return self.worker.execute_redqueen(payload)
+        self.execute(payload, payload2)
+        return self.worker.execute_redqueen(payload, payload2)
 
 
-    def __get_bitmap_hash(self, payload):
-        bitmap, _ = self.execute(payload)
+    def __get_bitmap_hash(self, payload, payload2):
+        bitmap, _ = self.execute(payload, payload2)
         if bitmap is None:
             return None
         return bitmap.hash()
 
 
-    def __get_bitmap_hash_robust(self, payload):
-        hashes = {self.__get_bitmap_hash(payload) for _ in range(3)}
+    def __get_bitmap_hash_robust(self, payload, payload2):
+        hashes = {self.__get_bitmap_hash(payload, payload2) for _ in range(3)}
         if len(hashes) == 1:
             return hashes.pop()
         # self.logger.warn("Hash doesn't seem stable")
         return None
 
-
-    def __perform_redqueen(self, payload, metadata):
+    # keep payload2 unchanged
+    def __perform_redqueen(self, payload, payload2, metadata):
         self.stage_update_label("redq_color")
 
-        orig_hash = self.__get_bitmap_hash_robust(payload)
+        orig_hash = self.__get_bitmap_hash_robust(payload, payload2)
         extension = bytes([207, 117, 130, 107, 183, 200, 143, 154])
-        appended_hash = self.__get_bitmap_hash_robust(payload + extension)
+        appended_hash = self.__get_bitmap_hash_robust(payload + extension, payload2)
 
         if orig_hash and orig_hash == appended_hash:
             self.logger.debug("Redqueen: Input can be extended")
@@ -358,7 +373,7 @@ class FuzzingStateLogic:
         else:
             payload_array = bytearray(payload)
 
-        colored_alternatives = self.__perform_coloring(payload_array)
+        colored_alternatives = self.__perform_coloring(payload_array, payload2)
         if colored_alternatives:
             payload_array = colored_alternatives[0]
             assert isinstance(colored_alternatives[0], bytearray), print(
@@ -371,12 +386,15 @@ class FuzzingStateLogic:
         rq_info = RedqueenInfoGatherer()
         rq_info.make_paths(RedqueenWorkdir(self.worker.pid, self.config))
         for pld in colored_alternatives:
-            if self.execute_redqueen(pld):
+            if self.execute_redqueen(pld, payload2):
                 rq_info.get_info(pld)
 
         rq_info.get_proposals()
         self.stage_update_label("redq_mutate")
-        rq_info.run_mutate_redqueen(payload_array, self.execute)
+
+        def execute_wrapper(payload, label=None, extra_info=None):
+            return self.execute(payload, payload2, label, extra_info)
+        rq_info.run_mutate_redqueen(payload_array, execute_wrapper)
 
         #if self.mode_fix_checksum:
         #    for addr in rq_info.get_hash_candidates():
@@ -400,6 +418,7 @@ class FuzzingStateLogic:
                     effector_map[i + j] = 1
 
     def handle_deterministic(self, payload, metadata):
+        payload2 = self.payload2_now
         if self.config.afl_dumb_mode:
             return False, {}
 
@@ -409,6 +428,9 @@ class FuzzingStateLogic:
         limiter_map = self.create_limiter_map(payload)
         effector_map = None
 
+        def execute_wrapper(payload, label=None, extra_info=None):
+            return self.execute(payload, payload2, label, extra_info)
+        
         # Mutable payload allows faster bitwise manipulations
         payload_array = bytearray(payload)
         
@@ -417,9 +439,9 @@ class FuzzingStateLogic:
 
         # Walking bitflips
         if det_info["stage"] == "flip_1":
-            bitflip.mutate_seq_walking_bits(payload_array,      self.execute, skip_null=skip_zero, effector_map=limiter_map)
-            bitflip.mutate_seq_two_walking_bits(payload_array,  self.execute, skip_null=skip_zero, effector_map=limiter_map)
-            bitflip.mutate_seq_four_walking_bits(payload_array, self.execute, skip_null=skip_zero, effector_map=limiter_map)
+            bitflip.mutate_seq_walking_bits(payload_array,      execute_wrapper, skip_null=skip_zero, effector_map=limiter_map)
+            bitflip.mutate_seq_two_walking_bits(payload_array,  execute_wrapper, skip_null=skip_zero, effector_map=limiter_map)
+            bitflip.mutate_seq_four_walking_bits(payload_array, execute_wrapper, skip_null=skip_zero, effector_map=limiter_map)
 
             det_info["stage"] = "flip_8"
             if self.stage_timeout_reached():
@@ -432,15 +454,15 @@ class FuzzingStateLogic:
                 self.logger.debug("Preparing effector map..")
                 effector_map = bytearray(limiter_map)
 
-            bitflip.mutate_seq_walking_byte(payload_array, self.execute, skip_null=skip_zero, limiter_map=limiter_map, effector_map=effector_map)
+            bitflip.mutate_seq_walking_byte(payload_array, execute_wrapper, skip_null=skip_zero, limiter_map=limiter_map, effector_map=effector_map)
 
             if use_effector_map:
                 self.dilate_effector_map(effector_map, limiter_map)
             else:
                 effector_map = limiter_map
 
-            bitflip.mutate_seq_two_walking_bytes(payload_array,  self.execute, effector_map=effector_map)
-            bitflip.mutate_seq_four_walking_bytes(payload_array, self.execute, effector_map=effector_map)
+            bitflip.mutate_seq_two_walking_bytes(payload_array,  execute_wrapper, effector_map=effector_map)
+            bitflip.mutate_seq_four_walking_bytes(payload_array, execute_wrapper, effector_map=effector_map)
 
             det_info["stage"] = "arith"
             if effector_map:
@@ -451,9 +473,9 @@ class FuzzingStateLogic:
         # Arithmetic mutations..
         if det_info["stage"] == "arith":
             effector_map = det_info.get("eff_map", None)
-            arithmetic.mutate_seq_8_bit_arithmetic(payload_array,  self.execute, skip_null=skip_zero, effector_map=effector_map, arith_max=arith_max)
-            arithmetic.mutate_seq_16_bit_arithmetic(payload_array, self.execute, skip_null=skip_zero, effector_map=effector_map, arith_max=arith_max)
-            arithmetic.mutate_seq_32_bit_arithmetic(payload_array, self.execute, skip_null=skip_zero, effector_map=effector_map, arith_max=arith_max)
+            arithmetic.mutate_seq_8_bit_arithmetic(payload_array,  execute_wrapper, skip_null=skip_zero, effector_map=effector_map, arith_max=arith_max)
+            arithmetic.mutate_seq_16_bit_arithmetic(payload_array, execute_wrapper, skip_null=skip_zero, effector_map=effector_map, arith_max=arith_max)
+            arithmetic.mutate_seq_32_bit_arithmetic(payload_array, execute_wrapper, skip_null=skip_zero, effector_map=effector_map, arith_max=arith_max)
 
             det_info["stage"] = "intr"
             if self.stage_timeout_reached():
@@ -462,9 +484,9 @@ class FuzzingStateLogic:
         # Interesting value mutations..
         if det_info["stage"] == "intr":
             effector_map = det_info.get("eff_map", None)
-            interesting_values.mutate_seq_8_bit_interesting(payload_array, self.execute, skip_null=skip_zero, effector_map=effector_map)
-            interesting_values.mutate_seq_16_bit_interesting(payload_array, self.execute, skip_null=skip_zero, effector_map=effector_map, arith_max=arith_max)
-            interesting_values.mutate_seq_32_bit_interesting(payload_array, self.execute, skip_null=skip_zero, effector_map=effector_map, arith_max=arith_max)
+            interesting_values.mutate_seq_8_bit_interesting(payload_array, execute_wrapper, skip_null=skip_zero, effector_map=effector_map)
+            interesting_values.mutate_seq_16_bit_interesting(payload_array, execute_wrapper, skip_null=skip_zero, effector_map=effector_map, arith_max=arith_max)
+            interesting_values.mutate_seq_32_bit_interesting(payload_array, execute_wrapper, skip_null=skip_zero, effector_map=effector_map, arith_max=arith_max)
 
             det_info["stage"] = "done"
 
@@ -472,10 +494,11 @@ class FuzzingStateLogic:
 
 
     def __perform_rq_dict(self, payload_array, metadata):
+        payload2 = self.payload2_now
         rq_dict = havoc.get_redqueen_dict()
         counter = 0
         seen_addr_to_value = havoc.get_redqueen_seen_addr_to_value()
-        if len(payload_array) < 256:
+        if len(payload_array) < 256: # 我们用不到了，256字节的输入非常少
             for addr in rq_dict:
                 for repl in rq_dict[addr]:
                     if addr in seen_addr_to_value and (
@@ -489,43 +512,50 @@ class FuzzingStateLogic:
                         for i in range(len(payload_array)-len(repl)):
                             counter += 1
                             mutated = apply_dict(payload_array, repl, i)
-                            self.execute(mutated, label="redq_dict")
+                            self.execute(mutated, payload2, label="redq_dict")
         self.logger.debug("RedQ-Dict: Have performed %d iters", counter)
 
 
     def __perform_radamsa(self, payload_array, metadata):
+        payload2 = self.payload2_now
         perf = metadata["performance"]
         radamsa_amount = havoc.havoc_range(self.HAVOC_MULTIPLIER/perf) // self.RADAMSA_DIV
 
+        def execute_wrapper(payload, label=None, extra_info=None):
+            return self.execute(payload, payload2, label, extra_info)
+        
         self.stage_update_label("radamsa")
-        radamsa.mutate_seq_radamsa_array(payload_array, self.execute, radamsa_amount)
+        radamsa.mutate_seq_radamsa_array(payload_array, execute_wrapper, radamsa_amount)
 
     def __perform_havoc(self, payload_array: bytes, metadata, use_splicing):
+        payload2 = self.payload2_now
         perf = metadata["performance"]
         havoc_amount = havoc.havoc_range(self.HAVOC_MULTIPLIER / perf)
 
+        def execute_wrapper(payload, label=None, extra_info=None):  
+            return self.execute(payload, payload2, label, extra_info)
         if use_splicing:
             self.stage_update_label("afl_splice")
-            havoc.mutate_seq_splice_array(payload_array, self.execute, havoc_amount)
+            havoc.mutate_seq_splice_array(payload_array, execute_wrapper, havoc_amount)
         else:
             self.stage_update_label("afl_havoc")
-            havoc.mutate_seq_havoc_array(payload_array, self.execute, havoc_amount)
+            havoc.mutate_seq_havoc_array(payload_array, execute_wrapper, havoc_amount)
 
 
-    def __check_colorization(self, orig_hash, payload_array, min, max):
+    def __check_colorization(self, orig_hash, payload_array, payload2, min, max):
         backup = payload_array[min:max]
         for i in range(min, max):
             payload_array[i] = rand.int(255)
-        new_hash = self.__get_bitmap_hash(payload_array)
+        new_hash = self.__get_bitmap_hash(payload_array, payload2)
         if new_hash is not None and new_hash == orig_hash:
             return True
         else:
             payload_array[min:max] = backup
             return False
 
-    def __colorize_payload(self, orig_hash, payload_array):
+    def __colorize_payload(self, orig_hash, payload_array, payload2):
         def checker(min_i, max_i):
-            self.__check_colorization(orig_hash, payload_array, min_i, max_i)
+            self.__check_colorization(orig_hash, payload_array, payload2, min_i, max_i)
 
         c = ColorizerStrategy(len(payload_array), checker)
         t = time.time()
@@ -539,9 +569,9 @@ class FuzzingStateLogic:
             i += 1
 
 
-    def __perform_coloring(self, payload_array):
+    def __perform_coloring(self, payload_array, payload2):
         self.logger.debug("Redqueen: Initial colorize...")
-        orig_hash = self.__get_bitmap_hash_robust(payload_array)
+        orig_hash = self.__get_bitmap_hash_robust(payload_array, payload2)
         if orig_hash is None:
             return None
 
@@ -550,8 +580,8 @@ class FuzzingStateLogic:
             if len(colored_arrays) >= FuzzingStateLogic.COLORIZATION_COUNT:
                 assert False  # TODO remove me
             tmpdata = bytearray(payload_array)
-            self.__colorize_payload(orig_hash, tmpdata)
-            new_hash = self.__get_bitmap_hash(tmpdata)
+            self.__colorize_payload(orig_hash, tmpdata, payload2)
+            new_hash = self.__get_bitmap_hash(tmpdata, payload2)
             if new_hash is not None and new_hash == orig_hash:
                 colored_arrays.append(tmpdata)
             else:
