@@ -81,9 +81,9 @@ class ClientConnection:
     def send_ready(self):
         self.sock.send_bytes(msgpack.packb({"type": MSG_READY, "worker_id": self.pid}))
 
-    def send_new_input(self, data, bitmap, info):
+    def send_new_input(self, payload, payload2, bitmap, info):
         self.sock.send_bytes(msgpack.packb(
-            {"type": MSG_NEW_INPUT, "input": {"payload": data, "bitmap": bitmap, "info": info}}))
+            {"type": MSG_NEW_INPUT, "input": {"payload": payload, "payload2": payload2, "bitmap": bitmap, "info": info}}))
 
     def send_node_done(self, node_id, results, new_payload):
         self.sock.send_bytes(msgpack.packb(

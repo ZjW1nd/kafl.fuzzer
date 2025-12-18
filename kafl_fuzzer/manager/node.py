@@ -17,7 +17,7 @@ from kafl_fuzzer.common.util import read_binary_file, atomic_write
 class QueueNode:
     NextID = 1
 
-    def __init__(self, config, payload, bitmap, node_struct, write=True):
+    def __init__(self, config, payload, payload2, bitmap, node_struct, write=True):
         self.node_struct = node_struct
         self.busy = False
         self.workdir = config.workdir
@@ -25,7 +25,7 @@ class QueueNode:
         self.set_id(QueueNode.NextID, write=False)
         QueueNode.NextID += 1
 
-        self.set_payload(payload, write=write)
+        self.set_payload(payload, payload2, write=write)
         # store individual bitmaps only in debug mode
         if bitmap and config.debug:
             self.write_bitmap(bitmap)
@@ -44,8 +44,16 @@ class QueueNode:
         return read_binary_file(QueueNode.__get_payload_filename(workdir, node_struct['info']['exit_reason'], node_struct['id']))
 
     @staticmethod
+    def get_payload2(workdir, node_struct) -> bytes:
+        return read_binary_file(QueueNode.__get_payload2_filename(workdir, node_struct['info']['exit_reason'], node_struct['id']))
+    
+    @staticmethod
     def __get_payload_filename(workdir, exit_reason, node_id):
         return "%s/corpus/%s/payload_%05d" % (workdir, exit_reason, node_id)
+
+    @staticmethod
+    def __get_payload2_filename(workdir, exit_reason, node_id):
+        return "%s/corpus/%s/payload2_%05d" % (workdir, exit_reason, node_id)
 
     @staticmethod
     def __get_metadata_filename(workdir, node_id):
@@ -89,15 +97,25 @@ class QueueNode:
         self.node_struct = QueueNode.apply_metadata_update(self.node_struct, delta)
         self.update_file(write=write)
 
-    def set_payload(self, payload, write=True):
+    def set_payload(self, payload, payload2, write=True):
         self.set_payload_len(len(payload), write=False)
         atomic_write(QueueNode.__get_payload_filename(self.workdir, self.get_exit_reason(), self.get_id()), payload)
+        if payload2 is not None:
+            self.set_payload2_len(len(payload2), write=False)
+            atomic_write(QueueNode.__get_payload2_filename(self.workdir, self.get_exit_reason(), self.get_id()), payload2)
 
     def get_payload_len(self):
         return self.node_struct["payload_len"]
 
+    def get_payload2_len(self):
+        return self.node_struct["payload2_len"]
+    
     def set_payload_len(self, val, write=True):
         self.node_struct["payload_len"] = val
+        self.update_file(write)
+
+    def set_payload2_len(self, val, write=True):
+        self.node_struct["payload2_len"] = val
         self.update_file(write)
 
     def get_id(self):

@@ -111,7 +111,7 @@ class ManagerTask:
                     logger.debug("Received new input (exit=%s): %s" % (
                        msg["input"]["info"]["exit_reason"],
                        repr(msg["input"]["payload"][:24])))
-                    self.maybe_insert_node(msg["input"]["payload"], msg["input"]["bitmap"], msg["input"]["info"])
+                    self.maybe_insert_node(msg["input"]["payload"], msg["input"]["payload2"], msg["input"]["bitmap"], msg["input"]["info"])
                 elif msg["type"] == MSG_READY:
                     # Worker is ready for new input (initial hello or import done)
                     logger.debug(f"Worker {msg['worker_id']} sent READY..")
@@ -151,7 +151,7 @@ class ManagerTask:
                     shutil.copyfileobj(f_in, f_out)
             os.remove(tmp_trace)
 
-    def maybe_insert_node(self, payload, bitmap_array, info):
+    def maybe_insert_node(self, payload, payload2, bitmap_array, info):
         bitmap = ExecutionResult.bitmap_from_bytearray(bitmap_array,
                                                        info["exit_reason"],
                                                        info["performance"])
@@ -163,7 +163,7 @@ class ManagerTask:
         should_store, new_bytes, new_bits = self.bitmap_storage.should_store_in_queue(bitmap)
         if should_store:
             node_struct = {"info": info, "state": {"name": "initial"}}
-            node = QueueNode(self.config, payload, bitmap_array, node_struct, write=False)
+            node = QueueNode(self.config, payload, payload2, bitmap_array, node_struct, write=False) # 我们将payload和payload2打包作为一个整体
             node.set_new_bytes(new_bytes, write=False)
             node.set_new_bits(new_bits, write=False)
             self.queue.insert_input(node, bitmap)

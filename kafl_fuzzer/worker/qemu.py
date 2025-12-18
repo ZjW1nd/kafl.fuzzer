@@ -42,9 +42,9 @@ class qemu:
         self.bitmap_size = config.bitmap_size
         self.payload_size = config.payload_size
         self.payload_limit = config.payload_size - qemu.payload_header_size
-        # payload2
-        self.payload2_size = (1 << 20)
-        self.payload2_limit = (1 << 20) - qemu.payload_header_size
+        # payload2 还是改成config定义了, 通用一点
+        self.payload2_size = config.payload2_size
+        self.payload2_limit = config.payload2_size - qemu.payload_header_size
         self.config = config
         self.pid = pid
         self.alt_bitmap = bytearray(self.bitmap_size)
