@@ -58,7 +58,8 @@ class InputQueue:
         # - let scheduler pick randomly, with weighted distribution
 
         fav_items = self.statistics.data['favs_total']
-        cycle_size = int(min(1.5*fav_items, 4*self.num_workers))
+        # Avoid zero-sized cycles when no favorites exist
+        cycle_size = max(1, int(min(1.5*fav_items, 4*self.num_workers)))
 
         full_queue = sorted(self.id_to_node.values(),
                             key=lambda n: self.scheduler.score_priority_favs(n))
@@ -91,7 +92,11 @@ class InputQueue:
         node = self.id_to_node[nid]
         self.statistics.event_node_update(node, results)
         if new_payload:
-            node.set_payload(new_payload)
+            # Preserve payload2 when trimming updates only payload1
+            payload2 = b""
+            if node.get_payload2_len() > 0:
+                payload2 = node.get_payload2(node.workdir, node.node_struct)
+            node.set_payload(new_payload, payload2)
             node.node_struct["info"]["trimmed"] = True
             node.set_score(self.scheduler.score_speed(node))
         if results.get("performance"):

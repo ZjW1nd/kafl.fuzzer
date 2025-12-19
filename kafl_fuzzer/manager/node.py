@@ -25,6 +25,10 @@ class QueueNode:
         self.set_id(QueueNode.NextID, write=False)
         QueueNode.NextID += 1
 
+        # Ensure optional second payload bookkeeping exists even when missing
+        self.node_struct.setdefault("payload2_len", 0)
+        self.node_struct.setdefault("payload_len", 0)
+
         self.set_payload(payload, payload2, write=write)
         # store individual bitmaps only in debug mode
         if bitmap and config.debug:
@@ -45,7 +49,13 @@ class QueueNode:
 
     @staticmethod
     def get_payload2(workdir, node_struct) -> bytes:
-        return read_binary_file(QueueNode.__get_payload2_filename(workdir, node_struct['info']['exit_reason'], node_struct['id']))
+        # Gracefully handle nodes without a second payload
+        if node_struct.get("payload2_len", 0) == 0:
+            return b""
+        try:
+            return read_binary_file(QueueNode.__get_payload2_filename(workdir, node_struct['info']['exit_reason'], node_struct['id']))
+        except FileNotFoundError:
+            return b""
     
     @staticmethod
     def __get_payload_filename(workdir, exit_reason, node_id):
@@ -103,13 +113,17 @@ class QueueNode:
         atomic_write(QueueNode.__get_payload_filename(self.workdir, self.get_exit_reason(), self.get_id()), payload)
         if payload2 is not None:
             self.set_payload2_len(len(payload2), write=False)
+            # Only write payload2 when provided; preserve existing file otherwise
             atomic_write(QueueNode.__get_payload2_filename(self.workdir, self.get_exit_reason(), self.get_id()), payload2)
+        elif "payload2_len" not in self.node_struct:
+            # Keep metadata consistent for single-dimension fuzzing
+            self.set_payload2_len(0, write=False)
 
     def get_payload_len(self):
         return self.node_struct["payload_len"]
 
     def get_payload2_len(self):
-        return self.node_struct["payload2_len"]
+        return self.node_struct.get("payload2_len", 0)
     
     def set_payload_len(self, val, write=True):
         self.node_struct["payload_len"] = val

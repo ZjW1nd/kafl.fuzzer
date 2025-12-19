@@ -86,7 +86,12 @@ class WorkerTask:
     def handle_node(self, msg):
         meta_data: Dict[str, Any] = QueueNode.get_metadata(self.config.workdir, msg["task"]["nid"])
         payload: bytes = QueueNode.get_payload(self.config.workdir, meta_data)
-        payload2: bytes = QueueNode.get_payload2(self.config.workdir, meta_data)
+        # Optional second payload: skip reading if length is zero or entry missing
+        payload2_len = meta_data.get("payload2_len", 0)
+        meta_data.setdefault("payload2_len", payload2_len)
+        payload2: bytes = b""
+        if payload2_len > 0:
+            payload2 = QueueNode.get_payload2(self.config.workdir, meta_data)
 
         # fixme: determine globally based on all seen regulars
         t_dyn = self.t_soft + 1.2 * meta_data["info"]["performance"]
