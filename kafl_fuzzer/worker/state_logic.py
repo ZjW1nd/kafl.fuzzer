@@ -92,6 +92,7 @@ class FuzzingStateLogic:
         ret["state_time_grimoire"] = self.grimoire_time
         ret["state_time_grimoire_inference"] = self.grimoire_inference_time
         ret["state_time_redqueen"] = self.redqueen_time
+        ret["state_time_payload2"] = self.payload2_time
         ret["performance"] = self.performance
 
         if additional_data:
@@ -154,6 +155,7 @@ class FuzzingStateLogic:
         self.grimoire_time: float = 0
         self.grimoire_inference_time: float = 0
         self.redqueen_time: float = 0
+        self.payload2_time: float = 0
 
         self.worker.statistics.event_stage(stage, nid)
 
@@ -326,11 +328,16 @@ class FuzzingStateLogic:
                 self.__perform_havoc(payload, metadata, use_splicing=True)
                 self.splice_time += time.time() - splice_start_time
 
-            if payload2:
             # 这里我们做第二维度的变异
+            # 熔断机制：只有在 payload2 存在且 payload1 基本可用时才执行
+            # 简单策略：如果 metadata 显示上次执行成功（regular exit），才做 Ops 变异
+            if payload2 and metadata.get("info", {}).get("exit_reason") == "regular":
+                payload2_start_time = time.time()
                 self.__perform_mutate_payload2(payload, payload2, metadata)
+                self.payload2_time += time.time() - payload2_start_time
 
-        self.logger.debug("HAVOC times: afl: %.1f, splice: %.1f, grim: %.1f, rdmsa: %.1f", self.havoc_time, self.splice_time, self.grimoire_time, self.radamsa_time)
+        self.logger.debug("HAVOC times: afl: %.1f, splice: %.1f, grim: %.1f, rdmsa: %.1f, p2: %.1f", 
+                         self.havoc_time, self.splice_time, self.grimoire_time, self.radamsa_time, self.payload2_time)
 
 
     def validate_bytes(self, payload, metadata, extra_info=None):
@@ -612,7 +619,11 @@ class FuzzingStateLogic:
             return
 
         perf = metadata["performance"]
-        havoc_amount = havoc.havoc_range(self.HAVOC_MULTIPLIER / perf)
+        # 参考 JANUS：Image 权重高于 Ops（256:128 = 2:1）
+        # 这里降低 payload2 变异轮次为 payload1 的 1/2
+        # 可通过 config.dim2_weight_ratio 配置（默认 0.5）
+        dim2_weight = getattr(self.config, "dim2_weight_ratio", 0.5)
+        havoc_amount = havoc.havoc_range(self.HAVOC_MULTIPLIER / perf * dim2_weight)
 
         # Extract filesystem paths from payload2 for mutation pool
         try:
