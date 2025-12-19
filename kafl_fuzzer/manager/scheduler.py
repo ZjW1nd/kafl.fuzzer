@@ -47,9 +47,18 @@ class Scheduler:
         # payload runtime * length, lower is better
         # apply log scale such that notable changes in KB or msec lead to different score
         # resulting score granuarily should work well as bucket size for favs filtering
+        # For 2D fuzzing: consider combined length of both dimensions
         min_time=1/1000
         p_time = log_scale(node.get_performance() / min_time)
-        p_len  = log_scale(node.get_payload_len() / 1024)
+        
+        # Total payload size: payload1 + payload2 (if exists)
+        total_len = node.get_payload_len()
+        if hasattr(node, 'get_payload2_len'):
+            p2_len = node.get_payload2_len()
+            if p2_len and p2_len > 0:
+                total_len += p2_len
+        
+        p_len  = log_scale(total_len / 1024)
         return ceil(p_time*p_len)
 
     def score_priority_favs(self, node):
