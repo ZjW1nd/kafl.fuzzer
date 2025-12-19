@@ -1,8 +1,9 @@
 import struct
+import logging
 
-from prpc_call import *
+from .prpc_call import *
 
-from common.debug import log_prpc
+logger = logging.getLogger(__name__)
 
 ################################################################################
 
@@ -215,8 +216,9 @@ def getparams_copyjunction(data):
     return getparams_path_path(data)
 
 def getparams_invalidcid(data):
-    log_prpc("Invalid cid.  Abort.")
-    exit(1)
+    logger.error("Invalid cid. Abort.")
+    raise ValueError("Invalid PRPC call ID")
+
 ################################################################################
 
 def getparams(cid, data):

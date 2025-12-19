@@ -1,6 +1,6 @@
 import struct
 
-from prpc_call import *
+from .prpc_call import *
 
 ################################################################################
 

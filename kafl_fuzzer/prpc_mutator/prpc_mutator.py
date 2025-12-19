@@ -2,18 +2,15 @@
 
 import random
 import sys
-# import logging
+import logging
 import types
 import string
 
-from prpc_call import *
-from prpc_datafile_reader import *
-from prpc_datafile_writer import *
+from .prpc_call import *
+from .prpc_datafile_reader import *
+from .prpc_datafile_writer import *
 
-from common.debug import log_prpc
-
-# logging.basicConfig(filename='prpc.log', level=logging.INFO)
-# logger = logging.getLogger("prpc_mutator")
+logger = logging.getLogger(__name__)
 
 ################################################################################
 
@@ -123,7 +120,7 @@ def updatepathpool(call):
         if kill not in pathpool:
             # can happen if a delete call changes the path param
             # maybe implement path check of every param in the future
-            log_prpc("Attempt to remove non-existant "+str(kill)+" from pathpool")
+            logger.debug("Attempt to remove non-existant %s from pathpool", kill)
         else:
             pathpool.remove(kill)
     pathpool.extend(genlist)
@@ -147,13 +144,13 @@ def createrandombytes(length):
 
 # create C string of specified length (including NULL-byte)
 def createrandcstr(length):
-    randstr = bytearray(createrandombytes(length-1))
+    randstr = bytearray(createrandombytes(length-1).encode('latin-1'))
     # avoid premature NULL bytes
     for i in range(len(randstr)):
         while randstr[i] == 0:
             randstr[i] = random.getrandbits(8)
     # terminate C string
-    randstr = str(randstr) + b'\x00'
+    randstr = bytes(randstr) + b'\x00'
     return randstr
 
 def modifyCStrParam(param, new, *others):
@@ -170,24 +167,24 @@ def modifyCStrParam(param, new, *others):
 def random_file_or_folder():
     if len(pathpool):
         return random.choice(pathpool)
-    return ""
+    return b""
 
 def random_file():
     files = list(filter(lambda path: not path.endswith(b'\\'), pathpool))
     if len(files):
         return random.choice(files)
-    return ""
+    return b""
 
 def random_folder():
     folders = list(filter(lambda path: path.endswith(b'\\'), pathpool))
     if len(folders):
         return random.choice(folders)
-    return ""
+    return b""
 
 def new_file():
     parent_folder = random_folder()
     filename = ''.join([random.choice(string.ascii_uppercase + string.digits) for _ in range(6)])
-    return parent_folder + filename
+    return parent_folder + filename.encode('ascii')
 
 def new_folder():
     return new_file() + b'\\'
@@ -270,7 +267,7 @@ def modifycall(call):
        if random.uniform(0,1) < MODCHANCE:
            parambak = param
            params[pi] = modifyparam(param, False, call.cid, pi)
-           log_prpc("modified\n\t"+str(parambak)+"\n\tto\n\t"+str(params[pi])+'\n\tin\n\t'+str(call))
+           logger.debug("modified\n\t%s\n\tto\n\t%s\n\tin\n\t%s", parambak, params[pi], call)
 
 def create_random_call():
     call = None
@@ -298,7 +295,7 @@ def usage(scriptname):
     sys.exit(1)
 
 def get_mutated_calls(del_chance, calls):
-    log_prpc("mutate calls")
+    logger.debug("mutate calls")
     new_calls = list()
     for call in calls:
         if call.cid == PRPC_ID.LISTENDCALL.value:
@@ -306,7 +303,7 @@ def get_mutated_calls(del_chance, calls):
             break
 
         if random.uniform(0,1) < del_chance:
-            log_prpc("deleted\n\t"+str(call))
+            logger.debug("deleted\n\t%s", call)
         else:
             modifycall(call)
             new_calls.append(call)
@@ -314,7 +311,7 @@ def get_mutated_calls(del_chance, calls):
 
         if random.uniform(0,1) < ADDCALLCHANCE:
             new_call = create_random_call()
-            log_prpc("added\n\t"+str(new_call))
+            logger.debug("added\n\t%s", new_call)
             new_calls.append(new_call)
             updatepathpool(new_call)
 
@@ -339,7 +336,7 @@ def main():
 
 
         if random.uniform(0,1) < DELETECALLCHANCE:
-            log_prpc("deleted\n\t"+str(call))
+            logger.debug("deleted\n\t%s", call)
         else:
             modifycall(call)
             new_calls.append(call)
@@ -347,7 +344,7 @@ def main():
 
         if random.uniform(0,1) < ADDCALLCHANCE:
             new_call = create_random_call()
-            log_prpc("added\n\t"+str(new_call))
+            logger.debug("added\n\t%s", new_call)
             new_calls.append(new_call)
             updatepathpool(new_call)
 
