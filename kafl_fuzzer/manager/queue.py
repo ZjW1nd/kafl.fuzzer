@@ -8,6 +8,8 @@ Queue of fuzz inputs (nodes). Interface with scheduler to determine next input t
 """
 import logging
 from kafl_fuzzer.manager.scheduler import Scheduler
+from kafl_fuzzer.manager.node import QueueNode as Node
+from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +18,7 @@ class InputQueue:
         self.num_workers = config.processes
         self.scheduler = Scheduler()
         self.id_to_node = {}
-        self.current_cycle = []
+        self.current_cycle : List[Node] = []
         self.bitmap_index_to_fav_node = {}
         self.num_cycles = 0
         self.statistics = statistics
