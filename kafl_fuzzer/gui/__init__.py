@@ -289,6 +289,10 @@ class GuiDrawer:
             (16, " p(col)", pfloat(d.p_coll()) + "%"),
             (35, " Regular", "%6s (N/A) %10s" % (pnum((d.num_found("regular"))),
                                                  ptime(d.time_since("regular"))))])
+        self.gui.print_info_line([
+            (16, " P2", pnum(d.nodes_with_payload2_count())),
+            (16, " P2Avg", pbyte(int(d.avg_payload2_size())) + "B"),
+            (35, "", "")], prefix=" ")
         self.gui.print_thin_line()
         self.gui.print_info_line([
             (11, "Init", pnum(d.yield_init())),
@@ -297,6 +301,13 @@ class GuiDrawer:
             (10, "Det", pnum(d.yield_det())),
             (11, "Hvc", pnum(d.yield_havoc()))
             ], prefix="Yld: ")
+        if d.yield_payload2() > 0:
+            self.gui.print_info_line([
+                (11, "P2", pnum(d.yield_payload2())),
+                (11, "", ""),
+                (11, "", ""),
+                (10, "", ""),
+                (11, "", "")], prefix="     ")
         self.gui.print_info_line([
             (11, "Init", pnum(d.fav_init())),
             (11, "Rq/Gr", pnum(d.fav_redq())),
@@ -343,15 +354,33 @@ class GuiDrawer:
         self.gui.print_header_line("Node Info")
         nid = d.worker_input_id(i)
         if nid not in [None, 0] and d.nodes.get(nid, None):
+            payload2_size = d.node_payload2_size(nid)
             self.gui.print_info_line([
                 (8, "Id", "%4d" % nid),
                 (12, "Size",   pbyte(d.node_size(nid)) + "B"),
                 (13, "Perf",   perf(d.node_performance(nid))),
                 (12, "Score",  pnum(d.node_score(nid))),
                 (14, "Fuzzed", atime(d.node_time(nid)))])
+            if payload2_size > 0:
+                self.gui.print_info_line([
+                    (8, "P2", pbyte(payload2_size) + "B"),
+                    (12, "", ""),
+                    (13, "", ""),
+                    (12, "", ""),
+                    (14, "", "")], prefix="")
             if cur_hex_rows:
                 self.gui.print_thin_line()
-                self.gui.print_hexdump(d.node_payload(nid), max_rows=cur_hex_rows-1)
+                # Display Payload hexdump
+                if payload2_size > 0 and cur_hex_rows > 2:
+                    # Split space between payload and payload2
+                    payload_rows = (cur_hex_rows - 2) // 2
+                    payload2_rows = cur_hex_rows - 2 - payload_rows
+                    self.gui.print_hexdump(d.node_payload(nid), max_rows=payload_rows)
+                    if payload2_rows > 0:
+                        self.gui.print_thin_line()
+                        self.gui.print_hexdump(d.node_payload2(nid), max_rows=payload2_rows)
+                else:
+                    self.gui.print_hexdump(d.node_payload(nid), max_rows=cur_hex_rows-1)
             self.gui.print_end_line()
         else:
             self.gui.print_info_line([
@@ -640,6 +669,10 @@ class GuiData:
                 self.stats["yield"].get("afl_splice", 0) +
                 self.stats["yield"].get("radamsa", 0))
 
+    def yield_payload2(self):
+        """Payload2 特定的变异阶段统计"""
+        return self.stats["yield"].get("payload2_havoc", 0)
+
     def yield_det(self):
         return (self.stats["yield"].get("afl_arith_1", 0) +
                 self.stats["yield"].get("afl_arith_2", 0) +
@@ -768,6 +801,43 @@ class GuiData:
         exit_reason = self.nodes[nid]["info"]["exit_reason"]
         filename = self.workdir + "/corpus/%s/payload_%05d" % (exit_reason, nid)
         return read_binary_file(filename)[0:1024]  # TODO remove path traversal vuln
+
+    def node_payload2_size(self, nid):
+        """获取 payload2 的大小"""
+        if not self.nodes.get(nid, None):
+            return 0
+        return self.nodes[nid].get("payload2_len", 0)
+
+    def node_payload2(self, nid):
+        """获取 payload2 的内容（前 1024 字节）"""
+        exit_reason = self.nodes[nid]["info"]["exit_reason"]
+        filename = self.workdir + "/corpus/%s/payload2_%05d" % (exit_reason, nid)
+        try:
+            data = read_binary_file(filename)
+            return data[0:1024] if data else b""
+        except:
+            return b""
+
+    def nodes_with_payload2_count(self):
+        """统计有 payload2 的节点数量"""
+        count = 0
+        for nid in self.nodes:
+            if self.nodes[nid].get("payload2_len", 0) > 0:
+                count += 1
+        return count
+
+    def avg_payload2_size(self):
+        """计算 payload2 的平均大小"""
+        total = 0
+        count = 0
+        for nid in self.nodes:
+            payload2_len = self.nodes[nid].get("payload2_len", 0)
+            if payload2_len > 0:
+                total += payload2_len
+                count += 1
+        if count > 0:
+            return total / count
+        return 0
 
     def load_worker(self, id):
         self.worker_stats[id] = self.read_file("worker_stats_%d" % id)
