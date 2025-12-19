@@ -115,6 +115,7 @@ settings.validators.register(
     Validator("debug", default=False, cast=bool),
     # fuzz
     Validator("seed_dir", default=None, cast=cast_expand_path),
+    Validator("seed_dir2", default=None, cast=cast_expand_path),
     Validator("dict", default=None, cast=cast_expand_path),
     Validator("funky", default=False, cast=bool),
     Validator("afl_dump_mode", default=False, cast=bool),
@@ -158,9 +159,13 @@ settings.validators.register(
     Validator("log_crashes", default=False, cast=bool),
     Validator("timeout_hard", cast=float),
     Validator("payload_size", cast=int),
+    Validator("payload2_size", default=None, cast=int),
     Validator("bitmap_size", cast=int),
     Validator("trace", default=False, cast=bool),
     Validator("trace_cb", default=False, cast=bool),
+    # 2D fuzzing
+    Validator("dim2_filepool", default=None, cast=cast_expand_path),
+    Validator("dim2_weight_ratio", default=0.5, cast=float),
     # debug
     Validator("action"),
     Validator("input", default=lambda config, _validator: config.workdir, cast=cast_expand_path_no_verify),

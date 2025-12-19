@@ -83,7 +83,8 @@ def add_args_general(parser):
 def add_args_fuzzer(parser):
     parser.add_argument('--seed-dir', metavar='<dir>', help='path to the seed directory.')
     parser.add_argument('--seed-dir2', required=False, metavar='<dir>', help=hidden('path to the 2nd dimension seed directory (for 2D fuzzing)'))
-    parser.add_argument('--dim2_filepool', required=False, metavar='<File>', help=hidden('path to the 2nd dimension filepool directory (for 2D fuzzing)'))
+    parser.add_argument('--dim2-filepool', required=False, metavar='<File>', help=hidden('path to the 2nd dimension filepool directory (for 2D fuzzing)'))
+    parser.add_argument('--dim2-weight-ratio', required=False, metavar='<float>', help=hidden('weight ratio for selecting 2nd dimension inputs (default 0.5)'), default=None)
     parser.add_argument('--dict', required=False, metavar='<file>',
                         help='import dictionary file for use in havoc stage.', default=None)
     parser.add_argument('--funky', required=False, help='perform extra validation and store funky inputs.',
@@ -140,6 +141,7 @@ def add_args_qemu(parser):
     parser.add_argument('--log-crashes', required=False, action='store_true', help="store hprintf logs only for crashes/timeouts")
     parser.add_argument('-t', '--t-hard', dest='timeout_hard', required=False, metavar='<n>', help="hard execution timeout (seconds)")
     parser.add_argument('--payload-size', metavar='<n>', required=False, help=hidden("maximum payload size in bytes (minus headers)"))
+    parser.add_argument('--payload2-size', metavar='<n>', required=False, help=hidden("maximum 2nd dimension payload size in bytes (minus headers)"))
     parser.add_argument('--bitmap-size', metavar='<n>', help="size of feedback bitmap (must be power of 2)")
     parser.add_argument('--trace', required=False, action='store_true', help='store binary PT traces of new inputs (fast).')
     parser.add_argument("--trace-cb", required=False, action='store_true', help='store decoded PT traces of new inputs (slow).')
