@@ -18,6 +18,7 @@ from kafl_fuzzer.technique.redqueen.workdir import RedqueenWorkdir
 from kafl_fuzzer.technique import trim, bitflip, arithmetic, interesting_values, havoc, radamsa
 from kafl_fuzzer.technique import grimoire_mutations as grimoire
 from kafl_fuzzer.worker.worker import WorkerTask
+from kafl_fuzzer.prpc_mutator.adapter import PRPCMutatorAdapter
 #from kafl_fuzzer.technique.trim import perform_trim, perform_center_trim, perform_extend
 #import kafl_fuzzer.technique.bitflip as bitflip
 #import kafl_fuzzer.technique.havoc as havoc
@@ -47,6 +48,17 @@ class FuzzingStateLogic:
         self.attention_execs_start: float = 0
 
         self.payload2_now = None
+        self.payload2_mutator = PRPCMutatorAdapter()
+
+        # Optional external file pool for 2D fuzzing (structure-aware hints)
+        self.dim2_filepool = []
+        dim2_pool_path = getattr(self.config, "dim2_filepool", None)
+        if dim2_pool_path:
+            try:
+                with open(dim2_pool_path, "r", encoding="utf-8", errors="ignore") as f:
+                    self.dim2_filepool = [line.strip().encode("utf-8") for line in f if line.strip()]
+            except Exception as e:
+                self.logger.warning(f"Failed to load dim2_filepool from {dim2_pool_path}: {e}")
 
     def __str__(self):
         return str(self.worker)
@@ -113,10 +125,10 @@ class FuzzingStateLogic:
                 return self.create_update({"name": "deterministic"}, {"afl_det_info": afl_det_info}), None
             return self.create_update({"name": "havoc"}, {"afl_det_info": afl_det_info}), None
         elif metadata["state"]["name"] == "havoc":
-            self.handle_havoc(payload, metadata)
+            self.handle_havoc(payload, payload2, metadata)
             return self.create_update({"name": "final"}, None), None
         elif metadata["state"]["name"] == "final":
-            self.handle_havoc(payload, metadata)
+            self.handle_havoc(payload, payload2, metadata)
             return self.create_update({"name": "final"}, None), None
         else:
             raise ValueError("Unknown task stage %s" % metadata["state"]["name"])
@@ -279,7 +291,7 @@ class FuzzingStateLogic:
             self.__perform_redqueen(payload, payload2, metadata)
         self.redqueen_time += time.time() - redqueen_start_time
 
-    def handle_havoc(self, payload: bytes, metadata):
+    def handle_havoc(self, payload: bytes, payload2: bytes, metadata):
         havoc_afl = True
         havoc_splice = True
         havoc_radamsa = self.config.radamsa
@@ -313,6 +325,10 @@ class FuzzingStateLogic:
                 splice_start_time = time.time()
                 self.__perform_havoc(payload, metadata, use_splicing=True)
                 self.splice_time += time.time() - splice_start_time
+
+            if payload2:
+            # 这里我们做第二维度的变异
+                self.__perform_mutate_payload2(payload, payload2, metadata)
 
         self.logger.debug("HAVOC times: afl: %.1f, splice: %.1f, grim: %.1f, rdmsa: %.1f", self.havoc_time, self.splice_time, self.grimoire_time, self.radamsa_time)
 
@@ -589,3 +605,37 @@ class FuzzingStateLogic:
 
         colored_arrays.append(payload_array)
         return colored_arrays
+
+    def __perform_mutate_payload2(self, payload, payload2, metadata):
+        # Skip if no payload2 is present
+        if not payload2:
+            return
+
+        perf = metadata["performance"]
+        havoc_amount = havoc.havoc_range(self.HAVOC_MULTIPLIER / perf)
+
+        # Extract filesystem paths from payload2 for mutation pool
+        try:
+            calls = self.payload2_mutator.parse(payload2)
+            # Seed mutator pathpool with external hints + observed paths
+            if self.dim2_filepool:
+                base_pool = list(self.dim2_filepool)
+                if self.payload2_mutator.pathpool:
+                    base_pool.extend(self.payload2_mutator.pathpool)
+                self.payload2_mutator.pathpool = list(dict.fromkeys(base_pool))
+
+            self.payload2_mutator.update_pathpool(calls)
+        except Exception as e:
+            self.logger.warning(f"Failed to parse payload2: {e}")
+            return
+
+        self.stage_update_label("payload2_havoc")
+
+        for _ in range(havoc_amount):
+            try:
+                # Mutate payload2 and execute with current payload1
+                mutated_payload2 = self.payload2_mutator.mutate(payload2, num_mutations=1)
+                self.execute(payload, mutated_payload2, label="payload2_havoc")
+            except Exception as e:
+                self.logger.debug(f"Payload2 mutation failed: {e}")
+                continue
