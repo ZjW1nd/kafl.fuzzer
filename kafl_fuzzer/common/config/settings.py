@@ -159,7 +159,7 @@ settings.validators.register(
     Validator("log_crashes", default=False, cast=bool),
     Validator("timeout_hard", cast=float),
     Validator("payload_size", cast=int),
-    Validator("payload2_size", default=None, cast=int),
+    Validator("payload2_size", cast=int),
     Validator("bitmap_size", cast=int),
     Validator("trace", default=False, cast=bool),
     Validator("trace_cb", default=False, cast=bool),
