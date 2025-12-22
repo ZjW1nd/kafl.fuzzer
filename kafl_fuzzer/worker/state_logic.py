@@ -17,7 +17,6 @@ from kafl_fuzzer.technique.redqueen.mod import RedqueenInfoGatherer
 from kafl_fuzzer.technique.redqueen.workdir import RedqueenWorkdir
 from kafl_fuzzer.technique import trim, bitflip, arithmetic, interesting_values, havoc, radamsa
 from kafl_fuzzer.technique import grimoire_mutations as grimoire
-from kafl_fuzzer.worker.worker import WorkerTask
 from kafl_fuzzer.prpc_mutator.adapter import PRPCMutatorAdapter
 #from kafl_fuzzer.technique.trim import perform_trim, perform_center_trim, perform_extend
 #import kafl_fuzzer.technique.bitflip as bitflip
@@ -32,7 +31,7 @@ class FuzzingStateLogic:
     COLORIZATION_STEPS = 1500
     COLORIZATION_TIMEOUT = 5
 
-    def __init__(self, worker: WorkerTask, config):
+    def __init__(self, worker, config):
         self.worker = worker
         self.logger = self.worker.logger
         self.config = config
